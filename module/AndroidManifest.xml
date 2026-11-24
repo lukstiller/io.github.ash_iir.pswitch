@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.ash_iir.pswitch"
-    android:versionCode="2"
-    android:versionName="1.0.1">
+    android:versionCode="3"
+    android:versionName="1.0.2-experimental">
 
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
 
     <!-- Android 11+ package visibility: required to see Google accounts. -->
     <queries>
+        <package android:name="com.android.vending" />
         <package android:name="com.google.android.gsf" />
         <package android:name="com.google.android.gms" />
     </queries>
@@ -33,12 +34,5 @@
             android:authorities="io.github.ash_iir.pswitch.provider"
             android:exported="true" />
 
-        <receiver
-            android:name=".AccountsCacheReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="io.github.ash_iir.pswitch.ACCOUNTS" />
-            </intent-filter>
-        </receiver>
     </application>
 </manifest>

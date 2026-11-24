@@ -4,10 +4,7 @@ import android.Manifest;
 import android.accounts.Account;
 import android.accounts.AccountManager;
 import android.app.Activity;
-import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
@@ -29,33 +26,21 @@ import java.util.Set;
 public class MainActivity extends Activity {
 
     private static final String VENDING = "com.android.vending";
-    private static final String ACTION_SET = "io.github.ash_iir.pswitch.SET_ACCOUNT";
     private static final String ACTION_REQUEST = "io.github.ash_iir.pswitch.REQUEST_ACCOUNTS";
-    private static final String ACTION_ACCOUNTS = "io.github.ash_iir.pswitch.ACCOUNTS";
     private static final String PREFS = "pswitch";
 
     private final List<String> emails = new ArrayList<String>();
     private ArrayAdapter<String> adapter;
     private TextView status;
     private String current;
-    private boolean receiverRegistered;
-
-    private final BroadcastReceiver accountsReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context c, Intent intent) {
-            String[] arr = intent.getStringArrayExtra("accounts");
-            emails.clear();
-            if (arr != null) {
-                for (String s : arr)
-                    if (s != null && s.indexOf('@') > 0 && !emails.contains(s))
-                        emails.add(s);
-            }
-            String fromHook = intent.getStringExtra("current");
-            if (fromHook != null && getSharedPreferences(PREFS, 0).getString("target", null) == null)
-                current = fromHook;
-            updateDisplay();
-        }
-    };
+    private final SharedPreferences.OnSharedPreferenceChangeListener prefsListener =
+            new SharedPreferences.OnSharedPreferenceChangeListener() {
+                @Override
+                public void onSharedPreferenceChanged(SharedPreferences prefs, String key) {
+                    if ("accounts".equals(key))
+                        loadAccounts();
+                }
+            };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -70,8 +55,8 @@ public class MainActivity extends Activity {
         hint.setTextSize(12);
         hint.setTextColor(0xFF666666);
         hint.setPadding(24, 0, 24, 12);
-        hint.setText("Tap any account to use it for Play Store + in-app purchases.\n"
-                + "No root and no restart needed.");
+        hint.setText("Select an account for normal Google Play billing.\n"
+                + "Experimental: verify the actual account in the purchase sheet.");
 
         Button refresh = new Button(this);
         refresh.setText("Refresh accounts");
@@ -125,36 +110,14 @@ public class MainActivity extends Activity {
         if (!hasPermission(Manifest.permission.GET_ACCOUNTS))
             askPermission(Manifest.permission.GET_ACCOUNTS);
 
-        registerAccountsReceiver();
+        getSharedPreferences(PREFS, 0).registerOnSharedPreferenceChangeListener(prefsListener);
         refresh();
     }
 
     @Override
     protected void onDestroy() {
-        if (receiverRegistered) {
-            try {
-                unregisterReceiver(accountsReceiver);
-            } catch (Throwable ignored) {
-            }
-            receiverRegistered = false;
-        }
+        getSharedPreferences(PREFS, 0).unregisterOnSharedPreferenceChangeListener(prefsListener);
         super.onDestroy();
-    }
-
-    private void registerAccountsReceiver() {
-        try {
-            IntentFilter f = new IntentFilter(ACTION_ACCOUNTS);
-            try {
-                java.lang.reflect.Method m = Activity.class.getMethod(
-                        "registerReceiver", BroadcastReceiver.class,
-                        IntentFilter.class, int.class);
-                m.invoke(this, accountsReceiver, f, 2); // RECEIVER_EXPORTED
-            } catch (Throwable old) {
-                registerReceiver(accountsReceiver, f);
-            }
-            receiverRegistered = true;
-        } catch (Throwable ignored) {
-        }
     }
 
     @Override
@@ -187,35 +150,30 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Asks the Play Store hook for the real account list (root-free). */
     private void refresh() {
-        SharedPreferences sp = getSharedPreferences(PREFS, 0);
-        String saved = sp.getString("target", null);
-        if (saved != null)
-            current = saved;
-        else if (current == null)
-            current = sp.getString("hookCurrent", null);
-
-        // Last list cached by the hook receiver shows instantly, even if
-        // Play Store was killed in the meantime.
-        if (emails.isEmpty()) {
-            Set<String> cached = sp.getStringSet("accounts", null);
-            if (cached != null)
-                emails.addAll(cached);
-        }
-
-        // Local API fallback; Play Store hook normally supplies the full list.
-        if (emails.isEmpty()) {
-            Set<String> found = new LinkedHashSet<String>();
-            for (Account a : AccountManager.get(this).getAccountsByType("com.google"))
-                found.add(a.name);
-            emails.addAll(found);
-        }
-
+        loadAccounts();
         Intent req = new Intent(ACTION_REQUEST);
         req.setPackage(VENDING);
         sendBroadcast(req);
+    }
 
+    private void loadAccounts() {
+        SharedPreferences sp = getSharedPreferences(PREFS, 0);
+        current = sp.getString("target", null);
+        emails.clear();
+        Set<String> cached = sp.getStringSet("accounts", null);
+        if (cached != null) {
+            emails.addAll(cached);
+        } else {
+            try {
+                Set<String> found = new LinkedHashSet<String>();
+                for (Account account : AccountManager.get(this).getAccountsByType("com.google"))
+                    found.add(account.name);
+                emails.addAll(found);
+            } catch (SecurityException ignored) {
+                // Play Store will publish its own visible accounts when available.
+            }
+        }
         updateDisplay();
     }
 
@@ -224,8 +182,8 @@ public class MainActivity extends Activity {
             emails.add(0, current);
 
         status.setText(current == null
-                ? "Using now: Play Store default"
-                : "Using now: " + current);
+                ? "Selected: Play Store default"
+                : "Selected: " + current);
 
         final List<String> display = new ArrayList<String>();
         display.add("↺  Reset — use Play Store default");
@@ -245,15 +203,10 @@ public class MainActivity extends Activity {
         e.putLong("version", System.currentTimeMillis());
         e.apply();
 
-        // Instant update for a running Play Store process.
-        Intent i = new Intent(ACTION_SET);
-        i.setPackage(VENDING);
-        i.putExtra("email", email);
-        sendBroadcast(i);
-
+        // The hook reads the selected account through the provider at each resolution.
         Toast.makeText(this, email == null
                         ? "Reset to Play Store default"
-                        : "Now using " + email,
+                        : "Account selected; verify in checkout",
                 Toast.LENGTH_SHORT).show();
         refresh();
     }
