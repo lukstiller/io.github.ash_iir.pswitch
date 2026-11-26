@@ -55,8 +55,7 @@ public class MainActivity extends Activity {
         hint.setTextSize(12);
         hint.setTextColor(0xFF666666);
         hint.setPadding(24, 0, 24, 12);
-        hint.setText("Select an account for normal Google Play billing.\n"
-                + "Experimental: verify the actual account in the purchase sheet.");
+        hint.setText("Select an account for normal Google Play billing.");
 
         Button refresh = new Button(this);
         refresh.setText("Refresh accounts");
